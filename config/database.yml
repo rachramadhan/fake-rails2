@@ -38,5 +38,5 @@ production:
   database: fake-rails2_production
   pool: 5
   username: root
-  password: '12345678'
+  password: qwertyui47
   socket: /var/run/mysqld/mysqld.sock

@@ -1,48 +1,86 @@
-# config valid only for current version of Capistrano
-lock '3.4.0'
+require 'capistrano/ext/multistage'
+require "rvm/capistrano"
+require 'bundler/capistrano'
 
-set :application, 'my_app_name'
-set :repo_url, 'git@example.com:me/my_repo.git'
+set :application, "fake-rails2"
+set :stages, %w(staging production)
+set :default_stage, 'staging'
+set :use_sudo, false
 
-# Default branch is :master
-# ask :branch, `git rev-parse --abbrev-ref HEAD`.chomp
+set :rvm_ruby_string, "ruby-2.0.0-p594@fake-app"
 
-# Default deploy_to directory is /var/www/my_app_name
-# set :deploy_to, '/var/www/my_app_name'
+set :ssh_options, {:forward_agent => true, :keys => %w(~/.ssh/id_rsa.pub)}
+set :scm, :git
+set :scm_passphrase, ""
+set :repository, "https://github.com/rachramadhan/fake-rails2.git"
+set :scm_verbose, true
 
-# Default value for :scm is :git
-# set :scm, :git
+set :keep_releases, 5
+set :deploy_via, :remote_cache
+set :template_dir, "config/deploy/templates/"
+set :shared_configs, %w(database.yml)
 
-# Default value for :format is :pretty
-# set :format, :pretty
+before "deploy:restart", "bundle:install"
 
-# Default value for :log_level is :debug
-# set :log_level, :debug
+after "deploy:setup", "deploy:create_assets_folder"
+after "deploy:setup", "deploy:create_uploads_folder"
 
-# Default value for :pty is false
-# set :pty, true
+after "deploy", "deploy:cleanup"
+after "deploy", "deploy:migrate"
 
-# Default value for :linked_files is []
-# set :linked_files, fetch(:linked_files, []).push('config/database.yml', 'config/secrets.yml')
-
-# Default value for linked_dirs is []
-# set :linked_dirs, fetch(:linked_dirs, []).push('log', 'tmp/pids', 'tmp/cache', 'tmp/sockets', 'vendor/bundle', 'public/system')
-
-# Default value for default_env is {}
-# set :default_env, { path: "/opt/ruby/bin:$PATH" }
-
-# Default value for keep_releases is 5
-# set :keep_releases, 5
+after "deploy:migrate", "deploy:asset_precompile"
+after "deploy:asset_precompile", "deploy:make_symlink_for_uploads"
+after "deploy:make_symlink_for_uploads", "stop"
+after "deploy", "start"
 
 namespace :deploy do
+  task :start do ; end
+  task :stop do ; end
+  task :restart, :roles => :app, :except => { :no_release => true } do ; end
 
-  after :restart, :clear_cache do
-    on roles(:web), in: :groups, limit: 3, wait: 10 do
-      # Here we can do anything such as:
-      # within release_path do
-      #   execute :rake, 'cache:clear'
-      # end
-    end
+  desc "Run pending migrations on already deployed code"
+  task :migrate do
+    run "cd #{current_path}; RAILS_ENV=production bundle exec rake db:migrate --trace"
   end
 
+  task :config_setup, :except => { :no_release => true } do
+    shared_configs.each do |config|
+      location = fetch(:template_dir, "config/deploy") + "#{config}.erb"
+      puts "#{location}: #{File.file?(location)}"
+      File.file?(location) ? (template = File.read(location)) : next
+
+      conf = ERB.new(template)
+
+      run "mkdir -p #{shared_path}/config"
+      put(conf.result(binding), "#{shared_path}/config/#{config}", {:via => :scp})
+    end
+  end
+  
+  task :asset_precompile, :roles => [:web, :app, :db] do
+    run "cd #{release_path} && bundle exec rake assets:clean && ln -sf #{shared_path}/assets #{release_path}/public/assets && rm -rf #{release_path}/public/assets/* && RAILS_ENV=#{rails_env} bundle exec rake assets:precompile --trace"
+  end
+
+  task :make_symlink_for_uploads, :roles => [:web, :app, :db] do
+    run "cd #{release_path} && ln -sf #{shared_path}/uploads #{release_path}/public/uploads && chmod -R 777 #{release_path}/public/uploads"
+  end
+
+  desc "create assets folder"
+  task :create_assets_folder do
+    run "cd #{shared_path} && mkdir assets"
+  end
+
+  desc "create uploads folder"
+  task :create_uploads_folder do
+    run "cd #{shared_path} && mkdir uploads"
+  end
+end
+
+desc 'stop think rails server'
+task :stop do
+    run "kill -9 $(cat #{current_path}/tmp/pids/thin.pid)"
+end
+
+desc 'start think rails server'
+task :start do
+  run "cd #{current_path} && bundle exec thin -p 5677 -e production -l log/thin.log -d start"
 end
