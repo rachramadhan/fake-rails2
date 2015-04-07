@@ -82,5 +82,5 @@ end
 
 desc 'start think rails server'
 task :start do
-  run "cd #{current_path} && bundle exec thin -p 5677 -e production -l log/thin.log -d start"
+  run "cd #{current_path} && bundle exec thin -p 3527 -e production -l log/thin.log -d start"
 end
